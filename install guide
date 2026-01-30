@@ -1,0 +1,197 @@
+SnapPy a Python-based Timelapse Tool for Klipper / Moonraker
+SnapPy is a lightweight Python script that creates timelapse frames on Klipper-based 3D printers.
+It listens for M118 SNAP commands and captures camera snapshots automatically.
+No Moonraker plugin required.
+Requirements
+Klipper + Moonraker installed
+Web UI (Mainsail, Fluidd, etc.)
+USB MJPEG camera accessible via:
+
+/webcam/?action=snapshot
+
+SSH access to the printer / Chromapad
+Python 3 installed (Python ≥ 3.8 recommended)
+_______________________________________________________________
+
+Step 1 – Install Python dependencies
+Connect to your printer via SSH and run:
+
+pip3 install websocket-client requests pillow
+___________________________________________________________________________
+
+Step 2 – Create the directory for timelapse frames
+
+mkdir -p /home/cp/timelapse_frames
+
+This directory will store all captured images.
+____________________________________________________________________
+
+Step 3 – Create the SnapPy script file
+Create the Python file:
+
+nano /home/cp/timelapse.py
+_____________________________________________________________________________
+
+Step 4 – Paste the SnapPy Python code
+Paste exactly the following code into timelapse.py:
+
+#!/usr/bin/env python3
+
+import os
+import requests
+import websocket
+from datetime import datetime
+
+# ===================== CONFIG =====================
+
+# IP address of the printer / Klipper host
+# Use 127.0.0.1 if the script runs directly on the printer
+PRINTER_IP = "127.0.0.1"
+
+# Snapshot URL for MJPEG / USB camera
+SNAPSHOT_URL = f"http://{PRINTER_IP}/webcam/?action=snapshot"
+
+# Directory where timelapse frames will be saved
+BASE_DIR = "/home/cp/timelapse_frames"
+
+# =================================================
+
+
+def ensure_base_dir():
+    os.makedirs(BASE_DIR, exist_ok=True)
+
+
+def take_snapshot():
+    now = datetime.now()
+
+    # Timestamp-based filename (safe and ordered)
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
+    filename = f"frame_{timestamp}.jpg"
+    filepath = os.path.join(BASE_DIR, filename)
+
+    try:
+        response = requests.get(SNAPSHOT_URL, timeout=5)
+        if response.status_code == 200:
+            with open(filepath, "wb") as f:
+                f.write(response.content)
+            print(f"[SnapPy] Saved snapshot: {filename}")
+        else:
+            print("[SnapPy] Snapshot failed (HTTP error)")
+    except Exception as e:
+        print(f"[SnapPy] Snapshot exception: {e}")
+
+
+def on_message(ws, message):
+    if "SNAP" in message:
+        take_snapshot()
+
+
+def on_open(ws):
+    print("[SnapPy] Connected to Moonraker WebSocket")
+
+
+def main():
+    ensure_base_dir()
+
+    ws_url = f"ws://{PRINTER_IP}/websocket"
+
+    ws = websocket.WebSocketApp(
+        ws_url,
+        on_message=on_message,
+        on_open=on_open
+    )
+
+    ws.run_forever()
+
+
+if __name__ == "__main__":
+    main()
+
+Save the file:
+CTRL + O
+press ENTER
+CTRL + X
+Step 5 – Test SnapPy manually
+Run the script:
+
+python3 /home/cp/timelapse.py
+
+In your web interface (Mainsail → Console), send:
+
+M118 SNAP
+
+If everything is correct, a .jpg file will appear in:
+
+/home/cp/timelapse_frames
+_______________________________________________________________________________
+
+Step 6 – Create a systemd service (auto-start)
+Create the service file:
+
+sudo nano /etc/systemd/system/timelapse.service
+
+Paste the following content:
+
+Ini
+[Unit]
+Description=SnapPy Timelapse Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/cp/timelapse.py
+WorkingDirectory=/home/cp
+Restart=always
+User=cp
+
+[Install]
+WantedBy=multi-user.target
+Save and exit.
+_________________________________________________________________________
+
+Step 7 – Enable and start the service
+
+sudo systemctl daemon-reload
+sudo systemctl enable timelapse.service
+sudo systemctl start timelapse.service
+
+Check status:
+
+systemctl status timelapse.service
+
+Expected result:
+
+Active: active (running)
+_________________________________________________________________________________________
+
+Step 8 – Configure your slicer (OrcaSlicer)
+In Layer Change G-code, add:
+
+M118 SNAP
+
+SnapPy will now capture one image per layer.
+Output format
+Images are saved in:
+
+/home/cp/timelapse_frames
+
+Filename format:
+
+
+frame_YYYY-MM-DD_HH-MM-SS_mmm.jpg
+
+Example:
+
+frame_2026-01-30_19-21-04_183.jpg
+__________________________________________________________________________
+
+How SnapPy works
+Slicer sends M118 SNAP
+Moonraker broadcasts the message
+SnapPy receives it via WebSocket
+SnapPy requests a camera snapshot
+Image is saved with a timestamped filename
+Notes
+No Moonraker plugin required
+Reboot-safe (systemd)
+Compatible with USB MJPEG cameras
+Designed for Klipper / CoPrint / Chromapad setups
